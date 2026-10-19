@@ -20,7 +20,7 @@ const standalone = () => window.matchMedia('(display-mode: standalone)').matches
 
 const S = {
   session: null, me: null, tab: null, date: todayISO(), sumDate: todayISO(),
-  staff: [], projects: [], tasks: [], reports: [], myReport: null, settings: null,
+  staff: [], projects: [], members: [], tasks: [], reports: [], myReport: null, settings: null,
   draft: null, draftKey: '', dirty: false, armed: null, tf: {staff:'', status:'open'},
   newTask: {title:'', staff:'', project:'', due:'', note:''}, authMode: 'login', loading: false,
   installEvt: null, pushState: 'unknown'
@@ -89,12 +89,13 @@ async function refresh() {
   if (!S.me || S.loading) return;
   S.loading = true;
   try {
-    const [staff, projects, tasks] = await Promise.all([
+    const [staff, projects, tasks, members] = await Promise.all([
       q(sb.from('staff').select('id,name,role,active,sort,user_id,linked_at').order('sort').order('name')),
       q(sb.from('projects').select('*').eq('active', true).order('sort').order('name')),
-      q(sb.from('tasks').select('*').order('due', { ascending: true, nullsFirst: false }))
+      q(sb.from('tasks').select('*').order('due', { ascending: true, nullsFirst: false })),
+      q(sb.from('project_members').select('project_id,staff_id'))
     ]);
-    S.staff = staff; S.projects = projects; S.tasks = tasks;
+    S.staff = staff; S.projects = projects; S.tasks = tasks; S.members = members;
     if (isAdmin()) {
       const from = addDays(S.sumDate, -9);
       S.reports = await q(sb.from('reports').select('*').gte('date', from).lte('date', S.sumDate));
@@ -238,7 +239,12 @@ function viewReport() {
   const r = S.myReport, me = S.me;
   const myTasks = S.tasks.filter(t => t.staff_id === me.id && (t.status !== 'done' || S.draft.items.some(i => i.task_id === t.id)));
   const projNames = S.projects.map(p => p.name);
-  const projOpts = sel => `<option value="">— Chọn dự án —</option>` + projNames.map(p => `<option ${p===sel?'selected':''}>${esc(p)}</option>`).join('') + (sel && !projNames.includes(sel) ? `<option selected>${esc(sel)}</option>` : '');
+  const mine = myProjects(), mineNames = mine.map(p => p.name), others = projNames.filter(n => !mineNames.includes(n));
+  const opt = sel => p => `<option ${p===sel?'selected':''}>${esc(p)}</option>`;
+  const projOpts = sel => `<option value="">— Chọn dự án —</option>`
+    + (mine.length ? `<optgroup label="Dự án của bạn">${mineNames.map(opt(sel)).join('')}</optgroup><optgroup label="Dự án khác">${others.map(opt(sel)).join('')}</optgroup>` : projNames.map(opt(sel)).join(''))
+    + (sel && !projNames.includes(sel) ? `<option selected>${esc(sel)}</option>` : '');
+  const used = new Set(S.draft.items.map(i => i.project).filter(Boolean));
   const taskOpts = sel => `<option value="">— Không gắn việc được giao —</option>` + myTasks.map(t => `<option value="${t.id}" ${t.id===sel?'selected':''}>${esc(t.title)}${t.due ? ' · hạn ' + fmt(t.due) : ''}</option>`).join('');
   const total = S.draft.items.reduce((a,i) => a + (Number(i.hours)||0), 0);
   view(`${installBanner()}${pushBanner()}
@@ -253,6 +259,9 @@ function viewReport() {
   </section>
   ${r ? `<div class="notice">Đã gửi lúc <b class="num">${hm(r.submitted_at)}</b> ngày ${fmt(iso(new Date(r.submitted_at)))}. Bạn có thể sửa rồi gửi lại.</div>` : ''}
   <section class="stack">
+    ${mine.length ? `<div class="panel stack" style="padding:14px"><h3>Hôm nay bạn làm dự án nào?</h3>
+      <div class="ticks">${mine.map(p => `<label class="tick"><input type="checkbox" id="pj-${p.id}" data-pjtick="${esc(p.name)}" ${used.has(p.name) ? 'checked' : ''}> ${esc(p.name)}</label>`).join('')}</div>
+      <p class="muted" style="font-size:13px">Tích dự án để thêm sẵn một dòng đầu việc cho dự án đó.</p></div>` : ''}
     <div class="spread"><h3>Đầu việc trong ngày</h3><span class="muted">Tổng: <b class="num" id="r-total">${hrs(total)}</b> giờ</span></div>
     ${S.draft.items.map((it, i) => `
       <div class="item-card">
@@ -271,6 +280,24 @@ function viewReport() {
   </section>
   <div class="row"><button class="btn primary" id="r-submit" data-act="submit">${r ? 'Gửi lại báo cáo' : 'Gửi báo cáo'}</button><span class="muted" id="r-msg" role="alert"></span></div>`);
 }
+function myProjects() {
+  const ids = new Set(S.members.filter(m => m.staff_id === S.me.id).map(m => m.project_id));
+  return S.projects.filter(p => ids.has(p.id));
+}
+function tickProject(name, on) {
+  const items = S.draft.items;
+  if (on) {
+    if (items.some(i => i.project === name)) return;
+    const blank = items.find(i => !i.project && !i.task_id && !i.work.trim() && !String(i.hours).trim());
+    if (blank) blank.project = name; else items.push({ ...blankItem(), project: name });
+  } else {
+    const keep = items.filter(i => i.project !== name || i.work.trim() || String(i.hours).trim());
+    if (keep.some(i => i.project === name)) toast('Dòng việc của dự án này đã có nội dung. Bấm "Bỏ dòng" nếu muốn xoá.');
+    S.draft.items = keep.length ? keep : [blankItem()];
+  }
+  S.dirty = true; viewReport();
+}
+
 async function submitReport(btn) {
   const D = S.draft, msg = $('#r-msg');
   const items = D.items.filter(i => i.work.trim()).map(i => ({
@@ -446,6 +473,10 @@ function viewSettings() {
     </tbody></table></div>
     <p class="muted" style="font-size:13px">"Gỡ" tách tài khoản khỏi tên đó, để người đúng chọn lại. Bỏ tích "Đang làm" khi nhân sự nghỉ việc; dữ liệu cũ vẫn giữ.</p>
   </section>
+  <section class="panel stack"><h2>Phân công dự án</h2>
+    <p class="muted">Bấm vào tên để giao hoặc bỏ người khỏi dự án. Nhân viên sẽ thấy dự án của mình trong ô tích ở Báo cáo ngày.</p>
+    ${S.projects.map(p => `<div class="stack" style="gap:6px"><b>${esc(p.name)}</b><div class="ticks">${S.staff.filter(s => s.active && s.role === 'staff').map(s => { const on = S.members.some(m => m.project_id === p.id && m.staff_id === s.id); return `<button class="chipbtn" aria-pressed="${on}" data-assign="${p.id}:${s.id}">${on ? '✓ ' : ''}${esc(s.name)}</button>`; }).join('')}</div></div>`).join('') || '<p class="muted">Chưa có dự án nào.</p>'}
+  </section>
   <section class="panel stack"><h2>Dự án đang chạy</h2>
     <label class="f">Mỗi dòng một dự án. Xoá dòng để ẩn dự án đã xong (báo cáo cũ vẫn giữ tên).<textarea id="c-proj" rows="12">${esc(S.projects.map(p => p.name).join('\n'))}</textarea></label>
     <div><button class="btn primary" data-act="saveproj">Lưu danh sách dự án</button></div>
@@ -513,6 +544,7 @@ V.addEventListener('input', e => {
 });
 V.addEventListener('change', e => {
   const el = e.target;
+  if (el.dataset.pjtick) return tickProject(el.dataset.pjtick, el.checked);
   if (el.id === 'r-date' && el.value) return changeDate(el.value);
   if (el.id === 's-date' && el.value) return setSumDate(el.value);
   if (S.tab === 'report' && el.dataset.f === 'task_id' && el.value) {
@@ -594,6 +626,15 @@ document.addEventListener('click', async e => {
   if (a === 'addstaff') {
     try { const maxSort = Math.max(0, ...S.staff.map(s => s.sort)); const res = await q(db.from('staff').insert({ name: 'Nhân sự mới ' + (S.staff.length + 1), sort: maxSort + 1 }).select()); S.staff.push(res[0]); viewSettings(); toast('Đã thêm dòng mới. Sửa họ tên rồi bấm Lưu.'); } catch (err) { toast(errMsg(err)); }
     return;
+  }
+  if (b.dataset.assign) {
+    const [pid, sid] = b.dataset.assign.split(':').map(Number), on = b.getAttribute('aria-pressed') === 'true';
+    b.disabled = true;
+    try {
+      if (on) { await q(db.from('project_members').delete().eq('project_id', pid).eq('staff_id', sid)); S.members = S.members.filter(m => !(m.project_id === pid && m.staff_id === sid)); }
+      else { await q(db.from('project_members').insert({ project_id: pid, staff_id: sid })); S.members.push({ project_id: pid, staff_id: sid }); }
+    } catch (err) { toast(errMsg(err)); }
+    viewSettings(); return;
   }
   if (b.dataset.savestaff) {
     const id = Number(b.dataset.savestaff), name = $('#sn-' + id).value.trim();
