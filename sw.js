@@ -1,5 +1,5 @@
 /* Service worker: chạy offline phần khung app + nhận thông báo đẩy */
-const CACHE = 'inhaus-bc-v3';
+const CACHE = 'inhaus-bc-v4';
 const SHELL = ['./', './index.html', './app.js', './config.js', './manifest.webmanifest', './icon-192.png', './icon-512.png',
   'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js'];
 
@@ -17,8 +17,9 @@ self.addEventListener('fetch', e => {
   const lib = u.href.startsWith('https://cdn.jsdelivr.net/npm/@supabase/');
   const font = u.host === 'fonts.googleapis.com' || u.host === 'fonts.gstatic.com';
   if (!own && !lib && !font) return;
+  // File của app luôn hỏi lại máy chủ (no-cache) để bản sửa mới hiện ngay
   e.respondWith(
-    fetch(e.request).then(r => {
+    fetch(e.request, own ? { cache: 'no-cache' } : undefined).then(r => {
       if (r.ok && (own || lib || font)) { const copy = r.clone(); caches.open(CACHE).then(c => c.put(e.request, copy)); }
       return r;
     }).catch(() => caches.match(e.request).then(r => r || (e.request.mode === 'navigate' ? caches.match('./index.html') : undefined)))
