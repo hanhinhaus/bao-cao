@@ -260,7 +260,7 @@ function viewReport() {
   ${r ? `<div class="notice">Đã gửi lúc <b class="num">${hm(r.submitted_at)}</b> ngày ${fmt(iso(new Date(r.submitted_at)))}. Bạn có thể sửa rồi gửi lại.</div>` : ''}
   <section class="stack">
     ${mine.length ? `<div class="panel stack" style="padding:14px"><h3>Hôm nay bạn làm dự án nào?</h3>
-      <div class="ticks">${mine.map(p => `<label class="tick"><input type="checkbox" id="pj-${p.id}" data-pjtick="${esc(p.name)}" ${used.has(p.name) ? 'checked' : ''}> ${esc(p.name)}</label>`).join('')}</div>
+      <div class="ticks">${mine.map(p => `<label class="tick"><input type="checkbox" id="pj-${p.id}" data-pjtick="${esc(p.name)}" ${used.has(p.name) ? 'checked' : ''}> <span>${esc(p.name)}${p.deadline ? `<small class="${dayDiff(todayISO(), p.deadline) < 0 ? 'overdue' : 'muted'}"> · ${deadlineText(p.deadline).replace(/^Hạn /, 'hạn ')}</small>` : ''}</span></label>`).join('')}</div>
       <p class="muted" style="font-size:13px">Tích dự án để thêm sẵn một dòng đầu việc cho dự án đó.</p></div>` : ''}
     <div class="spread"><h3>Đầu việc trong ngày</h3><span class="muted">Tổng: <b class="num" id="r-total">${hrs(total)}</b> giờ</span></div>
     ${S.draft.items.map((it, i) => `
@@ -329,13 +329,40 @@ async function changeDate(d) {
 }
 
 /* ---------- việc ---------- */
+/* ---------- tiến độ so với deadline ---------- */
+const dayDiff = (a, b) => Math.round((parse(b) - parse(a)) / 864e5);
+// start/end: 'YYYY-MM-DD'; progress 0..100 hoặc null; done: đã xong
+function sched(start, end, progress, done) {
+  if (done) return { code: 'done' };
+  if (!end) return { code: 'none' };
+  const today = todayISO(), left = dayDiff(today, end);
+  if (left < 0) return { code: 'late', left, label: `Trễ ${-left} ngày` };
+  let expected = null;
+  if (start && start < end) expected = Math.max(0, Math.min(100, Math.round(dayDiff(start, today) / dayDiff(start, end) * 100)));
+  if (progress != null && expected != null && progress < expected - 10) return { code: 'behind', left, expected, label: `Chậm tiến độ (cần ~${expected}%)` };
+  if (left <= 2 && (progress == null || progress < 100)) return { code: 'soon', left, expected, label: left === 0 ? 'Hạn hôm nay' : `Còn ${left} ngày` };
+  return { code: 'ok', left, expected, label: 'Đúng tiến độ' };
+}
+const SCHED_CHIP = { late: 'bad', behind: 'warn', soon: 'soonc', ok: 'ok' };
+const schedChip = r => SCHED_CHIP[r.code] ? `<span class="chip ${SCHED_CHIP[r.code]}">${r.label}</span>` : '';
+const taskSched = t => sched((t.created_at || '').slice(0, 10) || null, t.due, Number(t.progress) || 0, t.status === 'done');
+function projectStats(p) {
+  const ts = S.tasks.filter(t => t.project === p.name);
+  const progress = ts.length ? Math.round(ts.reduce((a, t) => a + (t.status === 'done' ? 100 : Number(t.progress) || 0), 0) / ts.length) : null;
+  const start = p.start_date || (ts.length ? ts.map(t => (t.created_at || '').slice(0, 10)).sort()[0] : null);
+  const r = sched(start, p.deadline, progress, progress === 100 && ts.every(t => t.status === 'done'));
+  return { ...r, progress, tasks: ts.length };
+}
+const deadlineText = d => { if (!d) return ''; const left = dayDiff(todayISO(), d); return `Hạn ${fmt(d)} · ${left < 0 ? 'trễ ' + (-left) + ' ngày' : left === 0 ? 'hôm nay' : 'còn ' + left + ' ngày'}`; };
+
 function taskRow(t, editable, showStaff) {
   const p = Math.max(0, Math.min(100, Number(t.progress) || 0)), st = t.status || 'todo';
-  const chip = isOverdue(t) ? '<span class="chip bad">Quá hạn</span>' : st === 'done' ? '<span class="chip ok">Hoàn thành</span>' : st === 'review' ? '<span class="chip info">Chờ duyệt</span>' : st === 'doing' ? '<span class="chip warn">Đang làm</span>' : '<span class="chip dim">Chưa bắt đầu</span>';
+  const chip = (st === 'done' ? '<span class="chip ok">Hoàn thành</span>' : st === 'review' ? '<span class="chip info">Chờ duyệt</span>' : st === 'doing' ? '<span class="chip dim">Đang làm</span>' : '<span class="chip dim">Chưa bắt đầu</span>')
+    + (st !== 'done' ? schedChip(taskSched(t)) : '');
   const opts = Object.entries(STATUS).filter(([k]) => isAdmin() || k !== 'done' || st === 'done');
   return `<div class="task">
    <div class="stack" style="gap:4px;min-width:0"><div class="row"><span class="t">${esc(t.title)}</span>${chip}</div>
-     <div class="sub">${showStaff ? `<span>${esc(staffName(t.staff_id))}</span>` : ''}<span>${esc(t.project || 'Việc chung')}</span>${t.due ? `<span class="${isOverdue(t) ? 'overdue' : ''}">Hạn ${fmt(t.due)}</span>` : ''}${t.last_report ? `<span>Báo cáo gần nhất ${fmt(t.last_report)}</span>` : ''}</div></div>
+     <div class="sub">${showStaff ? `<span>${esc(staffName(t.staff_id))}</span>` : ''}<span>${esc(t.project || 'Việc chung')}</span>${t.due ? `<span class="${isOverdue(t) ? 'overdue' : ''}">${st === 'done' ? 'Hạn ' + fmt(t.due) : deadlineText(t.due)}</span>` : ''}${t.last_report ? `<span>Báo cáo gần nhất ${fmt(t.last_report)}</span>` : ''}</div></div>
    <div class="ctl">
      <div class="bar ${st === 'done' ? 'done' : ''}" title="${p}%"><span style="width:${p}%"></span></div><span class="num" style="font-size:13px;width:38px;text-align:right">${p}%</span>
      ${editable ? `<select id="ts-${t.id}" aria-label="Trạng thái">${opts.map(([k,v]) => `<option value="${k}" ${k===st?'selected':''}>${v}</option>`).join('')}</select>
@@ -363,6 +390,10 @@ function viewSummary() {
   const totalH = Object.values(byStaff).reduce((a, r) => a + (Number(r.hours) || 0), 0);
   const blockers = staff.filter(s => byStaff[s.id] && (byStaff[s.id].blockers || '').trim());
   const overdue = S.tasks.filter(isOverdue);
+  const behind = S.tasks.filter(t => taskSched(t).code === 'behind');
+  const pstats = S.projects.map(p => ({ p, st: projectStats(p) }));
+  const order = { late: 0, behind: 1, soon: 2, ok: 3, none: 4, done: 5 };
+  pstats.sort((a, b) => order[a.st.code] - order[b.st.code] || (a.p.deadline || '9999').localeCompare(b.p.deadline || '9999'));
   const review = S.tasks.filter(t => t.status === 'review');
   const days = []; let x = d; while (days.length < 6) { if (parse(x).getDay() !== 0) days.unshift(x); x = addDays(x, -1); }
   const has = {}; S.reports.forEach(r => has[r.staff_id + '|' + r.date] = 1);
@@ -375,7 +406,15 @@ function viewSummary() {
     <div class="kpi"><span class="v">${sent}<span class="muted" style="font-size:16px">/${staff.length}</span></span><span class="l">Đã nộp báo cáo</span></div>
     <div class="kpi"><span class="v">${hrs(totalH)}</span><span class="l">Tổng giờ làm ghi nhận</span></div>
     <div class="kpi ${blockers.length ? 'alert' : ''}"><span class="v">${blockers.length}</span><span class="l">Người báo vướng mắc</span></div>
-    <div class="kpi ${overdue.length ? 'alert' : ''}"><span class="v">${overdue.length}</span><span class="l">Việc đang quá hạn</span></div>
+    <div class="kpi ${overdue.length ? 'alert' : ''}"><span class="v">${overdue.length}<span class="muted" style="font-size:16px"> · ${behind.length} chậm</span></span><span class="l">Việc trễ hạn · chậm tiến độ</span></div>
+  </section>
+  <section class="panel stack"><div class="spread"><h3>Tiến độ dự án so với deadline</h3><span class="muted" style="font-size:12px">Vạch đen: mức cần đạt hôm nay</span></div>
+    ${pstats.map(({ p, st }) => `<div class="prow">
+      <div style="min-width:0"><div class="pname">${esc(p.name)}</div><div class="muted" style="font-size:12px">${p.deadline ? deadlineText(p.deadline) : 'Chưa đặt deadline'}${st.tasks ? ` · ${st.tasks} việc` : ''}</div></div>
+      <div class="ptrack" title="${st.progress ?? '—'}% hoàn thành${st.expected != null ? ', cần ~' + st.expected + '%' : ''}"><span class="${st.code}" style="width:${st.progress ?? 0}%"></span>${st.expected != null ? `<i style="left:${st.expected}%"></i>` : ''}</div>
+      <div class="pmeta"><span class="num">${st.progress == null ? '—' : st.progress + '%'}</span>${schedChip(st) || (st.code === 'done' ? '<span class="chip ok">Xong</span>' : '')}</div>
+    </div>`).join('') || '<p class="muted">Chưa có dự án.</p>'}
+    <p class="muted" style="font-size:12px">% dự án = trung bình tiến độ các việc đã giao thuộc dự án. Đặt deadline ở tab Cài đặt.</p>
   </section>
   ${blockers.length ? `<section class="stack"><h3>Cần chị xử lý</h3>${blockers.map(s => `<div class="blocker"><b>${esc(s.name)}:</b> ${esc(byStaff[s.id].blockers)}</div>`).join('')}</section>` : ''}
   ${review.length ? `<section class="stack"><h3>Việc chờ chị duyệt hoàn thành</h3><div class="panel">${sortTasks(review).map(t => taskRow(t, true, true)).join('')}</div></section>` : ''}
@@ -477,9 +516,15 @@ function viewSettings() {
     <p class="muted">Bấm vào tên để giao hoặc bỏ người khỏi dự án. Nhân viên sẽ thấy dự án của mình trong ô tích ở Báo cáo ngày.</p>
     ${S.projects.map(p => `<div class="stack" style="gap:6px"><b>${esc(p.name)}</b><div class="ticks">${S.staff.filter(s => s.active && s.role === 'staff').map(s => { const on = S.members.some(m => m.project_id === p.id && m.staff_id === s.id); return `<button class="chipbtn" aria-pressed="${on}" data-assign="${p.id}:${s.id}">${on ? '✓ ' : ''}${esc(s.name)}</button>`; }).join('')}</div></div>`).join('') || '<p class="muted">Chưa có dự án nào.</p>'}
   </section>
-  <section class="panel stack"><h2>Dự án đang chạy</h2>
-    <label class="f">Mỗi dòng một dự án. Xoá dòng để ẩn dự án đã xong (báo cáo cũ vẫn giữ tên).<textarea id="c-proj" rows="12">${esc(S.projects.map(p => p.name).join('\n'))}</textarea></label>
-    <div><button class="btn primary" data-act="saveproj">Lưu danh sách dự án</button></div>
+  <section class="panel stack"><h2>Dự án đang chạy và deadline</h2>
+    <div class="scroll"><table class="tbl"><thead><tr><th>Dự án</th><th>Ngày bắt đầu</th><th>Deadline</th><th></th></tr></thead><tbody>
+    ${S.projects.map(p => `<tr><td style="min-width:180px">${esc(p.name)}</td>
+      <td><input type="date" id="ps-${p.id}" value="${p.start_date || ''}" aria-label="Ngày bắt đầu"></td>
+      <td><input type="date" id="pd-${p.id}" value="${p.deadline || ''}" aria-label="Deadline"></td>
+      <td class="row" style="flex-wrap:nowrap"><button class="btn small" data-saveproj="${p.id}">Lưu</button><button class="btn small danger ${S.armed === 'p' + p.id ? 'armed' : ''}" data-hideproj="${p.id}">${S.armed === 'p' + p.id ? 'Xác nhận ẩn' : 'Ẩn'}</button></td></tr>`).join('')}
+    <tr><td><input id="np-name" placeholder="Tên dự án mới"></td><td><input type="date" id="np-start" aria-label="Ngày bắt đầu"></td><td><input type="date" id="np-deadline" aria-label="Deadline"></td><td><button class="btn small primary" data-act="addproj">+ Thêm</button></td></tr>
+    </tbody></table></div>
+    <p class="muted" style="font-size:13px">Ngày bắt đầu dùng để tính mức tiến độ cần đạt. Để trống thì app lấy ngày giao việc đầu tiên của dự án. "Ẩn" dùng cho dự án đã xong; báo cáo cũ vẫn giữ tên dự án.</p>
   </section>`);
 }
 
@@ -650,18 +695,35 @@ document.addEventListener('click', async e => {
     try { await q(db.from('staff').update({ user_id: null, linked_at: null }).eq('id', id)); S.staff.find(s => s.id === id).user_id = null; toast('Đã gỡ liên kết'); } catch (err) { toast(errMsg(err)); }
     viewSettings(); return;
   }
-  if (a === 'saveproj') {
-    const names = [...new Set($('#c-proj').value.split('\n').map(x => x.trim()).filter(Boolean))];
+  if (b.dataset.saveproj) {
+    const id = Number(b.dataset.saveproj), start = $('#ps-' + id).value || null, deadline = $('#pd-' + id).value || null;
+    if (start && deadline && start > deadline) { toast('Ngày bắt đầu đang sau deadline. Kiểm tra lại.'); return; }
+    b.disabled = true;
+    try { const res = await q(db.from('projects').update({ start_date: start, deadline }).eq('id', id).select()); const i = S.projects.findIndex(p => p.id === id); S.projects[i] = res[0]; toast('Đã lưu deadline ' + res[0].name); }
+    catch (err) { toast(errMsg(err)); }
+    b.disabled = false; return;
+  }
+  if (b.dataset.hideproj) {
+    const id = Number(b.dataset.hideproj);
+    if (S.armed !== 'p' + id) { S.armed = 'p' + id; viewSettings(); return; }
+    S.armed = null;
+    try { await q(db.from('projects').update({ active: false }).eq('id', id)); S.projects = S.projects.filter(p => p.id !== id); toast('Đã ẩn dự án'); } catch (err) { toast(errMsg(err)); }
+    viewSettings(); return;
+  }
+  if (a === 'addproj') {
+    const name = $('#np-name').value.trim(), start = $('#np-start').value || null, deadline = $('#np-deadline').value || null;
+    if (!name) { toast('Nhập tên dự án mới'); $('#np-name').focus(); return; }
+    if (start && deadline && start > deadline) { toast('Ngày bắt đầu đang sau deadline. Kiểm tra lại.'); return; }
     b.disabled = true;
     try {
-      const all = await q(db.from('projects').select('*'));
-      const ups = names.map((n, i) => { const ex = all.find(p => p.name === n); return ex ? db.from('projects').update({ active: true, sort: i }).eq('id', ex.id) : db.from('projects').insert({ name: n, sort: i }); });
-      const offs = all.filter(p => p.active && !names.includes(p.name)).map(p => db.from('projects').update({ active: false }).eq('id', p.id));
-      for (const r of await Promise.all([...ups, ...offs])) if (r.error) throw r.error;
-      S.projects = await q(db.from('projects').select('*').eq('active', true).order('sort'));
-      toast('Đã lưu danh sách dự án');
-    } catch (err) { toast(errMsg(err)); }
-    b.disabled = false; return;
+      const ex = (await q(db.from('projects').select('*').eq('name', name)))[0];
+      const sort = Math.max(0, ...S.projects.map(p => p.sort || 0)) + 1;
+      const res = ex ? await q(db.from('projects').update({ active: true, start_date: start || ex.start_date, deadline: deadline || ex.deadline }).eq('id', ex.id).select())
+                     : await q(db.from('projects').insert({ name, start_date: start, deadline, sort }).select());
+      S.projects = S.projects.filter(p => p.id !== res[0].id).concat(res[0]);
+      toast(ex ? 'Đã hiện lại dự án ' + name : 'Đã thêm dự án ' + name); viewSettings();
+    } catch (err) { b.disabled = false; toast(errMsg(err)); }
+    return;
   }
 });
 window.addEventListener('beforeunload', e => { if (S.dirty) { e.preventDefault(); e.returnValue = ''; } });
