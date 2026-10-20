@@ -52,6 +52,7 @@ function errMsg(e) {
 }
 const staffName = id => (S.staff.find(s => s.id === id) || {}).name || '—';
 const isAdmin = () => S.me && S.me.role === 'admin';
+const isLead = () => !!(S.me && S.me.role !== 'admin' && S.me.is_team_lead);
 const isReviewer = () => isAdmin() || !!(S.me && S.me.is_team_lead) || S.projects.some(p => S.me && p.lead_staff_id === S.me.id);
 const canReviewTask = t => isAdmin() || !!S.me.is_team_lead || S.projects.some(p => p.name === t.project && p.lead_staff_id === S.me.id);
 const phaseName = id => (S.phases.find(p => p.id === Number(id)) || {}).name || '';
@@ -115,11 +116,12 @@ async function refresh() {
       S.checklist = Array.isArray(cl) ? cl : []; S.hours = hrsRows || [];
     }
     if (['workload', 'weekly'].includes(S.tab)) await loadWeek(true);
-    if (isAdmin()) {
+    if (isAdmin() || isLead()) {
       const from = addDays(S.sumDate, -9);
       S.reports = await q(sb.from('reports').select('*').gte('date', from).lte('date', S.sumDate));
-      if (S.tab === 'settings') S.settings = (await q(sb.from('settings').select('*')))[0] || null;
-    } else {
+      if (isAdmin() && S.tab === 'settings') S.settings = (await q(sb.from('settings').select('*')))[0] || null;
+    }
+    if (!isAdmin()) {
       const r = await q(sb.from('reports').select('*').eq('staff_id', S.me.id).eq('date', S.date));
       S.myReport = r[0] || null;
     }
@@ -199,7 +201,7 @@ async function loadNames() {
 
 /* ---------- khung chính ---------- */
 function renderUser() {
-  $('#userbox').innerHTML = `<span><b>${esc(S.me.name)}</b>${isAdmin() ? ' · quản lý' : ''}</span>
+  $('#userbox').innerHTML = `<span><b>${esc(S.me.name)}</b>${isAdmin() ? ' · quản lý' : isLead() ? ' · trưởng team' : ''}</span>
    <div class="menu"><button class="btn small" data-act="menu" aria-haspopup="true" aria-label="Tài khoản">☰</button><div class="menu-pop" id="menu" hidden>
      <button data-act="push-on">Bật thông báo nhắc 17h</button>
      <button data-act="push-test">Gửi thông báo thử</button>
@@ -213,7 +215,8 @@ function tabList() {
   if (isAdmin()) return [['summary','Tổng hợp'],['workload','Tải việc'],['projects','Dự án'],['tasks','Giao việc'],['review','Duyệt hồ sơ',toReview],['weekly','Báo cáo tuần'],['settings','Cài đặt']];
   const open = S.tasks.filter(t => t.staff_id === S.me.id && t.status !== 'done').length;
   const tabs = [['report','Báo cáo ngày'],['mine','Việc của tôi',open]];
-  if (isReviewer()) tabs.push(['review','Duyệt hồ sơ',toReview], ['projects','Dự án']);
+  if (isLead()) tabs.push(['summary','Tổng hợp'],['workload','Tải việc'],['projects','Dự án'],['review','Duyệt hồ sơ',toReview],['weekly','Báo cáo tuần']);
+  else if (isReviewer()) tabs.push(['review','Duyệt hồ sơ',toReview], ['projects','Dự án']);
   return tabs;
 }
 function renderTabs() {
@@ -448,8 +451,8 @@ function viewSummary() {
     </div>`).join('') || '<p class="muted">Chưa có dự án.</p>'}
     <p class="muted" style="font-size:12px">% dự án = trung bình tiến độ các việc đã giao thuộc dự án. Đặt deadline ở tab Cài đặt.</p>
   </section>
-  ${blockers.length ? `<section class="stack"><h3>Cần chị xử lý</h3>${blockers.map(s => `<div class="blocker"><b>${esc(s.name)}:</b> ${esc(byStaff[s.id].blockers)}</div>`).join('')}</section>` : ''}
-  ${review.length ? `<section class="stack"><h3>Việc chờ chị duyệt hoàn thành</h3><div class="panel">${sortTasks(review).map(t => taskRow(t, true, true)).join('')}</div></section>` : ''}
+  ${blockers.length ? `<section class="stack"><h3>Vướng mắc cần xử lý</h3>${blockers.map(s => `<div class="blocker"><b>${esc(s.name)}:</b> ${esc(byStaff[s.id].blockers)}</div>`).join('')}</section>` : ''}
+  ${review.length ? `<section class="stack"><h3>Việc chờ duyệt hoàn thành</h3><div class="panel">${sortTasks(review).map(t => taskRow(t, true, true)).join('')}</div></section>` : ''}
   <section class="panel" style="padding-block:4px">
     ${staff.map(s => { const r = byStaff[s.id]; return `<div class="sheet">
       <div class="who"><span class="nm">${esc(s.name)}</span>
@@ -547,7 +550,7 @@ function viewSettings() {
       <td>${s.user_id ? `<span class="chip ok">Đã liên kết</span>` : '<span class="chip dim">Chưa</span>'}</td>
       <td class="row" style="flex-wrap:nowrap"><button class="btn small" data-savestaff="${s.id}">Lưu</button>${s.user_id && s.id !== S.me.id ? `<button class="btn small danger ${S.armed === 'u' + s.id ? 'armed' : ''}" data-unlink="${s.id}">${S.armed === 'u' + s.id ? 'Xác nhận gỡ' : 'Gỡ'}</button>` : ''}</td></tr>`).join('')}
     </tbody></table></div>
-    <p class="muted" style="font-size:13px">Trưởng team được duyệt hồ sơ của mọi dự án. Chủ trì dự án đặt ở tab Dự án. "Gỡ" tách tài khoản khỏi tên đó, để người đúng chọn lại. Bỏ tích "Đang làm" khi nhân sự nghỉ việc; dữ liệu cũ vẫn giữ.</p>
+    <p class="muted" style="font-size:13px">Trưởng team: xem Tổng hợp, Tải việc, Dự án, Báo cáo tuần và duyệt hồ sơ mọi dự án; vẫn báo cáo ngày như nhân viên; không giao việc, không vào Cài đặt. Chủ trì dự án đặt ở tab Dự án. "Gỡ" tách tài khoản khỏi tên đó, để người đúng chọn lại. Bỏ tích "Đang làm" khi nhân sự nghỉ việc; dữ liệu cũ vẫn giữ.</p>
   </section>
   <section class="panel stack"><h2>Checklist duyệt hồ sơ nội bộ</h2>
     <label class="f">Mỗi dòng một mục kiểm tra. Người duyệt phải tích đủ các mục mới bấm "Đạt".<textarea id="c-checklist" rows="8">${esc((st && st.review_checklist || []).join('\n'))}</textarea></label>
