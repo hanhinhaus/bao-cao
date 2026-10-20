@@ -93,8 +93,8 @@ function phaseStats(p, f) {
   return { ...st, progress, tasks: ts.length, used, budget, ratio, budgetCode };
 }
 function viewProjects() {
-  const admin = isAdmin();
-  const list = admin ? S.projects : S.projects.filter(p => S.me.is_team_lead || p.lead_staff_id === S.me.id);
+  const admin = isManager();
+  const list = admin ? S.projects : S.projects.filter(p => p.lead_staff_id === S.me.id);
   const leads = S.staff.filter(s => s.active);
   view(`<section class="stack" style="gap:4px"><h2>Dự án · giai đoạn hồ sơ · ngân sách giờ</h2>
     <p class="muted">Giờ thực tế lấy từ báo cáo ngày (đầu việc có chọn giai đoạn). Cảnh báo khi đã dùng từ 80% ngân sách giờ mà tiến độ giai đoạn chưa tới 80%.</p></section>
@@ -108,6 +108,7 @@ function viewProjects() {
         <div class="row">${schedChip(st)}
         ${admin ? `<label class="f" style="min-width:200px">Chủ trì<select id="pl-${p.id}" data-lead="${p.id}"><option value="">— Chưa chọn —</option>${leads.map(s => `<option value="${s.id}" ${s.id === p.lead_staff_id ? 'selected' : ''}>${esc(s.name)}</option>`).join('')}</select></label>`
                : `<span class="muted">Chủ trì: <b>${esc(p.lead_staff_id ? staffName(p.lead_staff_id) : '—')}</b></span>`}</div></div>
+      ${admin ? `<div class="stack" style="gap:6px"><span class="muted" style="font-size:12px;font-weight:700;letter-spacing:.08em;text-transform:uppercase">Người tham gia dự án (bấm để gắn / bỏ)</span><div class="ticks">${S.staff.filter(s => s.active && s.role === 'staff').map(s => { const on = S.members.some(m => m.project_id === p.id && m.staff_id === s.id); return `<button class="chipbtn" aria-pressed="${on}" data-assign="${p.id}:${s.id}">${on ? '✓ ' : ''}${esc(s.name)}</button>`; }).join('')}</div></div>` : ''}
       ${ps.length ? `<div class="scroll"><table class="tbl ph"><thead><tr><th>Giai đoạn</th><th>Bắt đầu</th><th>Kết thúc</th><th>Giờ dự kiến</th><th>Giờ thực tế</th><th>Tiến độ</th>${admin ? '<th></th>' : ''}</tr></thead><tbody>
         ${ps.map(f => { const s2 = phaseStats(p, f); return `<tr>
           <td>${admin ? `<input id="fn-${f.id}" value="${esc(f.name)}" aria-label="Tên giai đoạn">` : `<b>${esc(f.name)}</b>`}<div class="muted" style="font-size:12px">${s2.tasks} việc</div></td>
@@ -292,7 +293,7 @@ document.addEventListener('change', async e => {
   const el = e.target; if (!S.me) return;
   if (el.dataset.lead) {
     const id = Number(el.dataset.lead), v = el.value ? Number(el.value) : null;
-    try { const res = await q(sb.from('projects').update({ lead_staff_id: v }).eq('id', id).select()); const i = S.projects.findIndex(p => p.id === id); S.projects[i] = res[0]; toast(v ? 'Đã đặt chủ trì: ' + staffName(v) : 'Đã bỏ chủ trì'); }
+    try { await q(sb.rpc('set_project_lead', { p_id: id, p_staff: v })); const pr = S.projects.find(p => p.id === id); if (pr) pr.lead_staff_id = v; toast(v ? 'Đã đặt chủ trì: ' + staffName(v) : 'Đã bỏ chủ trì'); }
     catch (err) { toast(errMsg(err)); viewProjects(); }
   }
 });
