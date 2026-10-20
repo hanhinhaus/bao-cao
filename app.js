@@ -21,8 +21,9 @@ const standalone = () => window.matchMedia('(display-mode: standalone)').matches
 const S = {
   session: null, me: null, tab: null, date: todayISO(), sumDate: todayISO(),
   staff: [], projects: [], members: [], tasks: [], reports: [], myReport: null, settings: null,
+  phases: [], reviews: [], hours: [], checklist: [], week: null, weekReports: null, weekKey: '',
   draft: null, draftKey: '', dirty: false, armed: null, tf: {staff:'', status:'open'},
-  newTask: {title:'', staff:'', project:'', due:'', note:''}, authMode: 'login', loading: false,
+  newTask: {title:'', staff:'', project:'', phase:'', due:'', note:'', link:''}, authMode: 'login', loading: false,
   installEvt: null, pushState: 'unknown'
 };
 
@@ -35,7 +36,10 @@ function errMsg(e) {
   if (/taken/.test(m)) return 'Tên này đã có người liên kết. Báo chị Hạnh nếu bị nhầm.';
   if (/already_linked/.test(m)) return 'Tài khoản này đã liên kết với một tên khác.';
   if (/only_status_progress/.test(m)) return 'Bạn chỉ đổi được trạng thái và tiến độ của việc.';
-  if (/only_admin_done/.test(m)) return 'Chỉ quản lý mới xác nhận "Hoàn thành". Hãy chọn "Chờ duyệt".';
+  if (/only_admin_done/.test(m)) return 'Việc chỉ "Hoàn thành" sau khi chủ trì hoặc trưởng team duyệt. Hãy chọn "Chờ duyệt".';
+  if (/not_reviewer/.test(m)) return 'Bạn không có quyền duyệt việc của dự án này.';
+  if (/self_review/.test(m)) return 'Không tự duyệt việc của chính mình. Nhờ chủ trì hoặc trưởng team khác duyệt.';
+  if (/note_required/.test(m)) return 'Ghi lý do trả lại để người làm biết cần sửa gì.';
   if (/row-level security|42501|permission denied/i.test(m)) return 'Tài khoản chưa có quyền làm việc này.';
   if (/Invalid login credentials/i.test(m)) return 'Sai email hoặc mật khẩu.';
   if (/already registered|already been registered/i.test(m)) return 'Email này đã có tài khoản. Chọn "Đăng nhập".';
@@ -46,6 +50,11 @@ function errMsg(e) {
 }
 const staffName = id => (S.staff.find(s => s.id === id) || {}).name || '—';
 const isAdmin = () => S.me && S.me.role === 'admin';
+const isReviewer = () => isAdmin() || !!(S.me && S.me.is_team_lead) || S.projects.some(p => S.me && p.lead_staff_id === S.me.id);
+const canReviewTask = t => isAdmin() || !!S.me.is_team_lead || S.projects.some(p => p.name === t.project && p.lead_staff_id === S.me.id);
+const phaseName = id => (S.phases.find(p => p.id === Number(id)) || {}).name || '';
+const phasesOf = projectName => { const p = S.projects.find(x => x.name === projectName); return p ? S.phases.filter(f => f.project_id === p.id).sort((a, b) => a.idx - b.idx) : []; };
+const safeUrl = u => /^https?:\/\//i.test(String(u || '').trim()) ? String(u).trim() : '';
 
 /* ---------- Supabase ---------- */
 if (!window.supabase || !CFG.url || !CFG.anonKey) {
@@ -89,13 +98,21 @@ async function refresh() {
   if (!S.me || S.loading) return;
   S.loading = true;
   try {
-    const [staff, projects, tasks, members] = await Promise.all([
-      q(sb.from('staff').select('id,name,role,active,sort,user_id,linked_at').order('sort').order('name')),
+    const [staff, projects, tasks, members, phases, reviews] = await Promise.all([
+      q(sb.from('staff').select('id,name,role,active,sort,user_id,linked_at,is_team_lead').order('sort').order('name')),
       q(sb.from('projects').select('*').eq('active', true).order('sort').order('name')),
       q(sb.from('tasks').select('*').order('due', { ascending: true, nullsFirst: false })),
-      q(sb.from('project_members').select('project_id,staff_id'))
+      q(sb.from('project_members').select('project_id,staff_id')),
+      q(sb.from('project_phases').select('*').order('idx')),
+      q(sb.from('task_reviews').select('*').order('created_at', { ascending: false }))
     ]);
-    S.staff = staff; S.projects = projects; S.tasks = tasks; S.members = members;
+    S.staff = staff; S.projects = projects; S.tasks = tasks; S.members = members; S.phases = phases; S.reviews = reviews;
+    const meNow = staff.find(x => x.id === S.me.id); if (meNow) S.me = { ...S.me, ...meNow };
+    if (isReviewer()) {
+      const [cl, hrsRows] = await Promise.all([q(sb.rpc('review_checklist')), q(sb.rpc('hours_by_phase'))]);
+      S.checklist = Array.isArray(cl) ? cl : []; S.hours = hrsRows || [];
+    }
+    if (['workload', 'weekly'].includes(S.tab)) await loadWeek(true);
     if (isAdmin()) {
       const from = addDays(S.sumDate, -9);
       S.reports = await q(sb.from('reports').select('*').gte('date', from).lte('date', S.sumDate));
@@ -189,9 +206,12 @@ function renderUser() {
      <button data-act="logout">Đăng xuất</button></div></div>`;
 }
 function tabList() {
-  if (isAdmin()) return [['summary','Tổng hợp'],['tasks','Giao việc'],['settings','Cài đặt']];
+  const toReview = S.tasks.filter(t => t.status === 'review' && canReviewTask(t) && (isAdmin() || t.staff_id !== S.me.id)).length;
+  if (isAdmin()) return [['summary','Tổng hợp'],['workload','Tải việc'],['projects','Dự án'],['tasks','Giao việc'],['review','Duyệt hồ sơ',toReview],['weekly','Báo cáo tuần'],['settings','Cài đặt']];
   const open = S.tasks.filter(t => t.staff_id === S.me.id && t.status !== 'done').length;
-  return [['report','Báo cáo ngày'],['mine','Việc của tôi',open]];
+  const tabs = [['report','Báo cáo ngày'],['mine','Việc của tôi',open]];
+  if (isReviewer()) tabs.push(['review','Duyệt hồ sơ',toReview], ['projects','Dự án']);
+  return tabs;
 }
 function renderTabs() {
   $('#nav').hidden = false;
@@ -202,7 +222,9 @@ $('#tabs').addEventListener('click', async e => {
   if (S.dirty && S.tab === 'report' && !confirmLeave()) return;
   S.tab = b.dataset.tab; S.armed = null; history.replaceState(null, '', '#' + S.tab);
   renderTabs();
-  if (S.tab === 'settings' && !S.settings) await refresh(); else renderView();
+  if (S.tab === 'settings' && !S.settings) await refresh();
+  else if (['workload', 'weekly'].includes(S.tab)) { await loadWeek(); renderView(); }
+  else renderView();
 });
 function confirmLeave() { S.dirty = false; return true; }
 
@@ -221,15 +243,16 @@ function pushBanner() {
 
 function renderView() {
   if (!S.me) return;
-  const fn = { report: viewReport, mine: viewMine, summary: viewSummary, tasks: viewTasks, settings: viewSettings, howto: viewHowto }[S.tab] || viewReport;
+  const fn = { report: viewReport, mine: viewMine, summary: viewSummary, tasks: viewTasks, settings: viewSettings, howto: viewHowto,
+    workload: viewWorkload, projects: viewProjects, review: viewReview, weekly: viewWeekly }[S.tab] || viewReport;
   fn();
 }
 
 /* ---------- NHÂN VIÊN: báo cáo ngày ---------- */
-const blankItem = () => ({ project: '', task_id: '', work: '', hours: '', percent: '' });
+const blankItem = () => ({ project: '', task_id: '', phase_id: '', work: '', hours: '', percent: '', link: '' });
 function loadDraft() {
   const r = S.myReport;
-  S.draft = r ? { items: (r.items || []).map(i => ({ project: i.project || '', task_id: i.task_id || '', work: i.work || '', hours: i.hours ?? '', percent: i.percent ?? '' })), blockers: r.blockers || '', tomorrow: r.tomorrow || '' }
+  S.draft = r ? { items: (r.items || []).map(i => ({ project: i.project || '', task_id: i.task_id || '', phase_id: i.phase_id ?? '', work: i.work || '', hours: i.hours ?? '', percent: i.percent ?? '', link: i.link || '' })), blockers: r.blockers || '', tomorrow: r.tomorrow || '' }
               : { items: [blankItem()], blockers: '', tomorrow: '' };
   if (!S.draft.items.length) S.draft.items = [blankItem()];
   S.draftKey = S.date; S.dirty = false;
@@ -268,9 +291,11 @@ function viewReport() {
         <div class="head"><h3>Việc ${i+1}</h3>${S.draft.items.length > 1 ? `<button class="btn ghost danger" data-del="${i}">Bỏ dòng</button>` : ''}</div>
         <label class="f half">Dự án<select id="it${i}-project" data-i="${i}" data-f="project">${projOpts(it.project)}</select></label>
         <label class="f half">Việc được giao<select id="it${i}-task" data-i="${i}" data-f="task_id">${taskOpts(it.task_id)}</select></label>
+        ${phasesOf(it.project).length ? `<label class="f half">Giai đoạn<select id="it${i}-phase" data-i="${i}" data-f="phase_id"><option value="">— Chọn giai đoạn —</option>${phasesOf(it.project).map(f => `<option value="${f.id}" ${String(f.id) === String(it.phase_id) ? 'selected' : ''}>${esc(f.name)}</option>`).join('')}</select></label>` : ''}
         <label class="f wide">Nội dung công việc<textarea id="it${i}-work" data-i="${i}" data-f="work" placeholder="VD: Triển khai bản vẽ chi tiết tủ bếp, chỉnh mặt bằng điện tầng 2">${esc(it.work)}</textarea></label>
         <label class="f">Số giờ<input id="it${i}-hours" data-i="${i}" data-f="hours" type="number" min="0" max="24" step="0.5" inputmode="decimal" value="${esc(it.hours)}"></label>
         <label class="f">Tiến độ hạng mục (%)<input id="it${i}-percent" data-i="${i}" data-f="percent" type="number" min="0" max="100" step="5" inputmode="numeric" value="${esc(it.percent)}"></label>
+        <label class="f half">Link bản vẽ (không bắt buộc)<input id="it${i}-link" data-i="${i}" data-f="link" type="url" inputmode="url" placeholder="Dán link OneDrive / Google Drive" value="${esc(it.link)}"></label>
       </div>`).join('')}
     <div><button class="btn" data-act="add">+ Thêm đầu việc</button></div>
   </section>
@@ -301,13 +326,14 @@ function tickProject(name, on) {
 async function submitReport(btn) {
   const D = S.draft, msg = $('#r-msg');
   const items = D.items.filter(i => i.work.trim()).map(i => ({
-    project: i.project || '', task_id: i.task_id || '', work: i.work.trim(),
+    project: i.project || '', task_id: i.task_id || '', phase_id: i.phase_id ? Number(i.phase_id) : null, work: i.work.trim(), link: safeUrl(i.link),
     hours: Math.max(0, Number(i.hours) || 0),
     percent: i.percent === '' || i.percent == null ? null : Math.max(0, Math.min(100, Math.round(Number(i.percent))))
   }));
   if (!items.length) { msg.textContent = 'Ghi ít nhất một đầu việc trước khi gửi.'; return; }
   if (items.some(i => !i.project && !i.task_id)) { msg.textContent = 'Mỗi đầu việc cần chọn dự án.'; return; }
   for (const i of items) if (!i.project && i.task_id) { const t = S.tasks.find(x => x.id === i.task_id); if (t) i.project = t.project || ''; }
+  for (const i of items) if (i.phase_id && !phasesOf(i.project).some(f => f.id === i.phase_id)) i.phase_id = null;
   const total = items.reduce((a,i) => a + i.hours, 0);
   if (total > 24) { msg.textContent = 'Tổng số giờ vượt 24. Kiểm tra lại cột số giờ.'; return; }
   btn.disabled = true; msg.textContent = 'Đang gửi…';
@@ -339,6 +365,7 @@ function sched(start, end, progress, done) {
   if (left < 0) return { code: 'late', left, label: `Trễ ${-left} ngày` };
   let expected = null;
   if (start && start < end) expected = Math.max(0, Math.min(100, Math.round(dayDiff(start, today) / dayDiff(start, end) * 100)));
+  if (progress == null && left > 2) return { code: 'none', left, expected };
   if (progress != null && expected != null && progress < expected - 10) return { code: 'behind', left, expected, label: `Chậm tiến độ (cần ~${expected}%)` };
   if (left <= 2 && (progress == null || progress < 100)) return { code: 'soon', left, expected, label: left === 0 ? 'Hạn hôm nay' : `Còn ${left} ngày` };
   return { code: 'ok', left, expected, label: 'Đúng tiến độ' };
@@ -360,9 +387,10 @@ function taskRow(t, editable, showStaff) {
   const chip = (st === 'done' ? '<span class="chip ok">Hoàn thành</span>' : st === 'review' ? '<span class="chip info">Chờ duyệt</span>' : st === 'doing' ? '<span class="chip dim">Đang làm</span>' : '<span class="chip dim">Chưa bắt đầu</span>')
     + (st !== 'done' ? schedChip(taskSched(t)) : '');
   const opts = Object.entries(STATUS).filter(([k]) => isAdmin() || k !== 'done' || st === 'done');
+  editable = editable && (isAdmin() || t.staff_id === S.me.id);
   return `<div class="task">
    <div class="stack" style="gap:4px;min-width:0"><div class="row"><span class="t">${esc(t.title)}</span>${chip}</div>
-     <div class="sub">${showStaff ? `<span>${esc(staffName(t.staff_id))}</span>` : ''}<span>${esc(t.project || 'Việc chung')}</span>${t.due ? `<span class="${isOverdue(t) ? 'overdue' : ''}">${st === 'done' ? 'Hạn ' + fmt(t.due) : deadlineText(t.due)}</span>` : ''}${t.last_report ? `<span>Báo cáo gần nhất ${fmt(t.last_report)}</span>` : ''}</div></div>
+     <div class="sub">${showStaff ? `<span>${esc(staffName(t.staff_id))}</span>` : ''}<span>${esc(t.project || 'Việc chung')}${t.phase_id ? ' · ' + esc(phaseName(t.phase_id)) : ''}</span>${safeUrl(t.link) ? `<a href="${esc(safeUrl(t.link))}" target="_blank" rel="noopener">Mở bản vẽ ↗</a>` : ''}${t.returns ? `<span class="chip warn">Trả lại ${t.returns} lần</span>` : ''}${t.due ? `<span class="${isOverdue(t) ? 'overdue' : ''}">${st === 'done' ? 'Hạn ' + fmt(t.due) : deadlineText(t.due)}</span>` : ''}${t.last_report ? `<span>Báo cáo gần nhất ${fmt(t.last_report)}</span>` : ''}</div></div>
    <div class="ctl">
      <div class="bar ${st === 'done' ? 'done' : ''}" title="${p}%"><span style="width:${p}%"></span></div><span class="num" style="font-size:13px;width:38px;text-align:right">${p}%</span>
      ${editable ? `<select id="ts-${t.id}" aria-label="Trạng thái">${opts.map(([k,v]) => `<option value="${k}" ${k===st?'selected':''}>${v}</option>`).join('')}</select>
@@ -370,7 +398,8 @@ function taskRow(t, editable, showStaff) {
        <button class="btn" data-save="${t.id}">Lưu</button>` : ''}
      ${isAdmin() ? `<button class="btn danger ${S.armed === t.id ? 'armed' : ''}" data-rm="${t.id}">${S.armed === t.id ? 'Xác nhận xoá' : 'Xoá'}</button>` : ''}
    </div>
-   ${t.note ? `<div class="note muted">${esc(t.note)}</div>` : ''}</div>`;
+   ${t.note ? `<div class="note muted">${esc(t.note)}</div>` : ''}
+   ${(() => { const r = S.reviews.find(x => x.task_id === t.id); return r && r.result === 'return' && t.status !== 'done' ? `<div class="note blocker"><b>Cần sửa (${esc(staffName(r.reviewer_id))}):</b> ${esc(r.note)}</div>` : ''; })()}</div>`;
 }
 const sortTasks = a => a.slice().sort((x, y) => (x.status === 'done') - (y.status === 'done') || (x.due || '9999').localeCompare(y.due || '9999'));
 function viewMine() {
@@ -482,6 +511,10 @@ function viewTasks() {
       <label class="f">Hạn chót<input id="n-due" type="date" value="${esc(N.due)}"></label>
       <label class="f">&nbsp;<button class="btn primary" id="n-add">Giao việc</button></label>
     </div>
+    <div class="grid2">
+      <label class="f">Giai đoạn hồ sơ<select id="n-phase" ${phasesOf(N.project).length ? '' : 'disabled'}><option value="">${phasesOf(N.project).length ? '— Chọn giai đoạn —' : N.project ? 'Dự án chưa có giai đoạn (tab Dự án)' : 'Chọn dự án trước'}</option>${phasesOf(N.project).map(f => `<option value="${f.id}" ${String(f.id) === N.phase ? 'selected' : ''}>${esc(f.name)}</option>`).join('')}</select></label>
+      <label class="f">Link bản vẽ (không bắt buộc)<input id="n-link" type="url" inputmode="url" value="${esc(N.link)}" placeholder="Dán link OneDrive / Google Drive"></label>
+    </div>
     <label class="f">Ghi chú / yêu cầu<textarea id="n-note" placeholder="Phạm vi, tiêu chuẩn bàn giao, file tham khảo…">${esc(N.note)}</textarea></label>
   </section>
   <section class="spread"><h2>Danh sách việc</h2>
@@ -502,15 +535,20 @@ function viewSettings() {
     <div><button class="btn" data-act="savedays">Lưu ngày nhắc</button></div>
   </section>
   <section class="panel stack"><div class="spread"><h2>Nhân sự</h2><button class="btn small" data-act="addstaff">+ Thêm người</button></div>
-    <div class="scroll"><table class="tbl"><thead><tr><th>Họ tên</th><th>Vai trò</th><th>Đang làm</th><th>Tài khoản</th><th></th></tr></thead><tbody>
+    <div class="scroll"><table class="tbl"><thead><tr><th>Họ tên</th><th>Vai trò</th><th>Trưởng team</th><th>Đang làm</th><th>Tài khoản</th><th></th></tr></thead><tbody>
     ${S.staff.map(s => `<tr>
       <td><input id="sn-${s.id}" value="${esc(s.name)}" aria-label="Họ tên"></td>
       <td><select id="sr-${s.id}" aria-label="Vai trò"><option value="staff" ${s.role === 'staff' ? 'selected' : ''}>Nhân viên</option><option value="admin" ${s.role === 'admin' ? 'selected' : ''}>Quản lý</option></select></td>
+      <td><input type="checkbox" id="stl-${s.id}" ${s.is_team_lead ? 'checked' : ''} aria-label="Trưởng team"></td>
       <td><input type="checkbox" id="sa-${s.id}" ${s.active ? 'checked' : ''} aria-label="Đang làm"></td>
       <td>${s.user_id ? `<span class="chip ok">Đã liên kết</span>` : '<span class="chip dim">Chưa</span>'}</td>
       <td class="row" style="flex-wrap:nowrap"><button class="btn small" data-savestaff="${s.id}">Lưu</button>${s.user_id && s.id !== S.me.id ? `<button class="btn small danger ${S.armed === 'u' + s.id ? 'armed' : ''}" data-unlink="${s.id}">${S.armed === 'u' + s.id ? 'Xác nhận gỡ' : 'Gỡ'}</button>` : ''}</td></tr>`).join('')}
     </tbody></table></div>
-    <p class="muted" style="font-size:13px">"Gỡ" tách tài khoản khỏi tên đó, để người đúng chọn lại. Bỏ tích "Đang làm" khi nhân sự nghỉ việc; dữ liệu cũ vẫn giữ.</p>
+    <p class="muted" style="font-size:13px">Trưởng team được duyệt hồ sơ của mọi dự án. Chủ trì dự án đặt ở tab Dự án. "Gỡ" tách tài khoản khỏi tên đó, để người đúng chọn lại. Bỏ tích "Đang làm" khi nhân sự nghỉ việc; dữ liệu cũ vẫn giữ.</p>
+  </section>
+  <section class="panel stack"><h2>Checklist duyệt hồ sơ nội bộ</h2>
+    <label class="f">Mỗi dòng một mục kiểm tra. Người duyệt phải tích đủ các mục mới bấm "Đạt".<textarea id="c-checklist" rows="8">${esc((st && st.review_checklist || []).join('\n'))}</textarea></label>
+    <div><button class="btn" data-act="savechecklist">Lưu checklist</button></div>
   </section>
   <section class="panel stack"><h2>Phân công dự án</h2>
     <p class="muted">Bấm vào tên để giao hoặc bỏ người khỏi dự án. Nhân viên sẽ thấy dự án của mình trong ô tích ở Báo cáo ngày.</p>
@@ -585,7 +623,7 @@ V.addEventListener('input', e => {
       if (el.dataset.f === 'hours') { const t = $('#r-total'); if (t) t.textContent = hrs(S.draft.items.reduce((a, i) => a + (Number(i.hours) || 0), 0)); }
     } else if (el.dataset.f) { S.draft[el.dataset.f] = el.value; S.dirty = true; }
   }
-  if (S.tab === 'tasks') { const m = { 'n-title': 'title', 'n-note': 'note', 'n-due': 'due' }; if (m[el.id]) S.newTask[m[el.id]] = el.value; }
+  if (S.tab === 'tasks') { const m = { 'n-title': 'title', 'n-note': 'note', 'n-due': 'due', 'n-link': 'link' }; if (m[el.id]) S.newTask[m[el.id]] = el.value; }
 });
 V.addEventListener('change', e => {
   const el = e.target;
@@ -594,10 +632,12 @@ V.addEventListener('change', e => {
   if (el.id === 's-date' && el.value) return setSumDate(el.value);
   if (S.tab === 'report' && el.dataset.f === 'task_id' && el.value) {
     const t = S.tasks.find(x => x.id === el.value), it = S.draft.items[+el.dataset.i];
-    if (t) { if (t.project) it.project = t.project; if (it.percent === '' && t.progress != null) it.percent = t.progress; S.dirty = true; viewReport(); }
+    if (t) { if (t.project) it.project = t.project; if (t.phase_id) it.phase_id = t.phase_id; if (!it.link && t.link) it.link = t.link; if (it.percent === '' && t.progress != null) it.percent = t.progress; S.dirty = true; viewReport(); }
   }
   if (el.id === 'n-staff') S.newTask.staff = el.value;
-  if (el.id === 'n-project') S.newTask.project = el.value;
+  if (el.id === 'n-project') { S.newTask.project = el.value; S.newTask.phase = ''; viewTasks(); }
+  if (el.id === 'n-phase') S.newTask.phase = el.value;
+  if (S.tab === 'report' && el.dataset.f === 'project' && el.dataset.i != null) { S.draft.items[+el.dataset.i].phase_id = ''; viewReport(); }
   if (el.id === 'f-staff') { S.tf.staff = el.value; viewTasks(); }
   if (el.id === 'f-status') { S.tf.status = el.value; viewTasks(); }
 });
@@ -651,9 +691,9 @@ document.addEventListener('click', async e => {
     if (!N.staff) { toast('Chọn người thực hiện'); return; }
     b.disabled = true;
     try {
-      const res = await q(db.from('tasks').insert({ title: N.title.trim(), staff_id: Number(N.staff), project: N.project, due: N.due || null, note: N.note.trim() }).select());
+      const res = await q(db.from('tasks').insert({ title: N.title.trim(), staff_id: Number(N.staff), project: N.project, phase_id: N.phase ? Number(N.phase) : null, link: safeUrl(N.link), due: N.due || null, note: N.note.trim() }).select());
       S.tasks.push(res[0]); toast('Đã giao việc cho ' + staffName(Number(N.staff)));
-      S.newTask = { title: '', staff: N.staff, project: N.project, due: '', note: '' }; viewTasks();
+      S.newTask = { title: '', staff: N.staff, project: N.project, phase: N.phase, due: '', note: '', link: '' }; viewTasks();
     } catch (err) { b.disabled = false; toast(errMsg(err)); }
     return;
   }
@@ -685,7 +725,7 @@ document.addEventListener('click', async e => {
     const id = Number(b.dataset.savestaff), name = $('#sn-' + id).value.trim();
     if (!name) { toast('Họ tên không được để trống'); return; }
     if (id === S.me.id && $('#sr-' + id).value !== 'admin') { toast('Không tự bỏ quyền quản lý của chính mình'); return; }
-    try { const res = await q(db.from('staff').update({ name, role: $('#sr-' + id).value, active: $('#sa-' + id).checked }).eq('id', id).select()); const i = S.staff.findIndex(s => s.id === id); S.staff[i] = res[0]; toast('Đã lưu ' + name); } catch (err) { toast(errMsg(err)); }
+    try { const res = await q(db.from('staff').update({ name, role: $('#sr-' + id).value, active: $('#sa-' + id).checked, is_team_lead: $('#stl-' + id).checked }).eq('id', id).select()); const i = S.staff.findIndex(s => s.id === id); S.staff[i] = res[0]; toast('Đã lưu ' + name); } catch (err) { toast(errMsg(err)); }
     return;
   }
   if (b.dataset.unlink) {

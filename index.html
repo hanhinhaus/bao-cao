@@ -15,7 +15,7 @@
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600;700&family=JetBrains+Mono:wght@500&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@75..100,600..800&family=Be+Vietnam+Pro:wght@400;500;600;700&family=JetBrains+Mono:wght@500&display=swap">
 <style>
 /* Một cột làm việc 960px; thanh tab dính đầu trang; mỗi nhân sự là một "tờ" báo cáo như sổ giao ban */
 :root{
@@ -153,7 +153,7 @@ details>summary{cursor:pointer;font-weight:600;color:var(--accent)}
 .chipbtn{appearance:none;font:inherit;font-size:13px;padding:5px 11px;border-radius:999px;border:1px solid var(--line);background:var(--bg);color:var(--muted);cursor:pointer}
 .chipbtn[aria-pressed="true"]{background:var(--accent-soft);border-color:var(--accent);color:var(--accent);font-weight:600}
 .chip.soonc{background:var(--warn-soft);color:var(--warn);border:1px dashed var(--warn)}
-.prow{display:grid;grid-template-columns:minmax(0,1.3fr) minmax(80px,1fr) auto;gap:12px;align-items:center;padding:8px 0;border-top:1px solid var(--line)}
+.prow{display:grid;grid-template-columns:minmax(0,1.3fr) minmax(80px,1fr) 230px;gap:12px;align-items:center;padding:8px 0;border-top:1px solid var(--line)}
 .prow:first-of-type{border-top:0}
 .pname{font-weight:600;font-size:14px}
 .ptrack{position:relative;height:10px;background:var(--bg);border:1px solid var(--line);border-radius:3px}
@@ -163,14 +163,15 @@ details>summary{cursor:pointer;font-weight:600;color:var(--accent)}
 .ptrack span.none{background:var(--accent)}
 .ptrack i{position:absolute;top:-4px;bottom:-4px;width:2px;background:var(--ink);transform:translateX(-1px)}
 .pmeta{display:flex;gap:8px;align-items:center;justify-content:flex-end;font-size:13px}
-@media (max-width:640px){.prow{grid-template-columns:1fr auto}.prow .ptrack{grid-column:1 / -1;grid-row:2}}
+@media (max-width:640px){.prow{grid-template-columns:1fr;gap:8px}.prow .pmeta{justify-content:flex-start;grid-row:2}.prow .ptrack{grid-row:3}}
 .install{display:flex;gap:12px;align-items:center;justify-content:space-between;flex-wrap:wrap}
 @media (prefers-reduced-motion:no-preference){.btn{transition:border-color .15s,background .15s}}
 </style>
+<link rel="stylesheet" href="v2.css?v=5">
 </head>
 <body>
 <header class="top"><div class="wrap">
-  <div class="brand"><span class="co">INHAUS Design · Sổ giao ban</span><h1>Báo cáo tiến độ hằng ngày</h1></div>
+  <div class="brand"><span class="co">INHAUS DESIGN · SỔ GIAO BAN</span><h1>Báo cáo tiến độ</h1></div>
   <div class="userbox" id="userbox"></div>
 </div></header>
 <nav class="tabs" aria-label="Chức năng" id="nav" hidden><div class="wrap" id="tabs"></div></nav>
@@ -178,7 +179,8 @@ details>summary{cursor:pointer;font-weight:600;color:var(--accent)}
 <div class="toast" id="toast" hidden role="status" aria-live="polite"></div>
 <noscript><div class="wrap"><div class="empty">Cần bật JavaScript để dùng app.</div></div></noscript>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
-<script src="config.js?v=4"></script>
-<script src="app.js?v=4"></script>
+<script src="config.js?v=5"></script>
+<script src="app.js?v=5"></script>
+<script src="features.js?v=5"></script>
 </body>
 </html>
