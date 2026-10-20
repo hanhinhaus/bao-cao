@@ -1,6 +1,7 @@
 <!doctype html>
 <html lang="vi">
 <head>
+<script>try{if(localStorage.getItem("inhaus-theme")==="dark")document.documentElement.dataset.theme="dark"}catch(e){}</script>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>INHAUS Báo cáo ngày</title>
@@ -27,11 +28,11 @@
   --f-num:"JetBrains Mono",ui-monospace,"SFMono-Regular",Menlo,monospace;
   color-scheme:light;
 }
-@media (prefers-color-scheme: dark){:root{
+:root[data-theme="dark"]{
   --bg:#121614; --surface:#1A1F1D; --ink:#E5EAE7; --muted:#9AA49F; --line:#2D3431;
   --accent:#93ADE8; --accent-soft:#222C42; --on-accent:#0E1420;
   --ok:#6CC992; --ok-soft:#1B3125; --warn:#E6AE57; --warn-soft:#382B17;
-  --bad:#F0877F; --bad-soft:#3C201E; --mark:#5E5214; --mark-ink:#FBF1B8; color-scheme:dark}}
+  --bad:#F0877F; --bad-soft:#3C201E; --mark:#5E5214; --mark-ink:#FBF1B8; color-scheme:dark}
 *{box-sizing:border-box}
 html{-webkit-text-size-adjust:100%}
 body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--f-body);font-size:15px;line-height:1.5;
@@ -167,7 +168,7 @@ details>summary{cursor:pointer;font-weight:600;color:var(--accent)}
 .install{display:flex;gap:12px;align-items:center;justify-content:space-between;flex-wrap:wrap}
 @media (prefers-reduced-motion:no-preference){.btn{transition:border-color .15s,background .15s}}
 </style>
-<link rel="stylesheet" href="v2.css?v=5">
+<link rel="stylesheet" href="v2.css?v=6">
 </head>
 <body>
 <header class="top"><div class="wrap">
@@ -179,8 +180,8 @@ details>summary{cursor:pointer;font-weight:600;color:var(--accent)}
 <div class="toast" id="toast" hidden role="status" aria-live="polite"></div>
 <noscript><div class="wrap"><div class="empty">Cần bật JavaScript để dùng app.</div></div></noscript>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
-<script src="config.js?v=5"></script>
-<script src="app.js?v=5"></script>
-<script src="features.js?v=5"></script>
+<script src="config.js?v=6"></script>
+<script src="app.js?v=6"></script>
+<script src="features.js?v=6"></script>
 </body>
 </html>

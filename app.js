@@ -202,6 +202,7 @@ function renderUser() {
      <button data-act="push-on">Bật thông báo nhắc 17h</button>
      <button data-act="push-test">Gửi thông báo thử</button>
      <button data-act="howto">Hướng dẫn cài app lên máy</button>
+     <button data-act="theme">${document.documentElement.dataset.theme === 'dark' ? '☀ Chuyển nền sáng' : '☾ Chuyển nền tối'}</button>
      <button data-act="refresh">Tải lại dữ liệu</button>
      <button data-act="logout">Đăng xuất</button></div></div>`;
 }
@@ -437,7 +438,7 @@ function viewSummary() {
     <div class="kpi ${blockers.length ? 'alert' : ''}"><span class="v">${blockers.length}</span><span class="l">Người báo vướng mắc</span></div>
     <div class="kpi ${overdue.length ? 'alert' : ''}"><span class="v">${overdue.length}<span class="muted" style="font-size:16px"> · ${behind.length} chậm</span></span><span class="l">Việc trễ hạn · chậm tiến độ</span></div>
   </section>
-  <section class="panel stack"><div class="spread"><h3>Tiến độ dự án so với deadline</h3><span class="muted" style="font-size:12px">Vạch đen: mức cần đạt hôm nay</span></div>
+  <section class="panel stack"><div class="spread"><h3>Tiến độ dự án so với deadline</h3><span class="muted" style="font-size:12px">Vạch đứt: mức cần đạt hôm nay</span></div>
     ${pstats.map(({ p, st }) => `<div class="prow">
       <div style="min-width:0"><div class="pname">${esc(p.name)}</div><div class="muted" style="font-size:12px">${p.deadline ? deadlineText(p.deadline) : 'Chưa đặt deadline'}${st.tasks ? ` · ${st.tasks} việc` : ''}</div></div>
       <div class="ptrack" title="${st.progress ?? '—'}% hoàn thành${st.expected != null ? ', cần ~' + st.expected + '%' : ''}"><span class="${st.code}" style="width:${st.progress ?? 0}%"></span>${st.expected != null ? `<i style="left:${st.expected}%"></i>` : ''}</div>

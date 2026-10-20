@@ -296,3 +296,28 @@ document.addEventListener('change', async e => {
     catch (err) { toast(errMsg(err)); viewProjects(); }
   }
 });
+
+/* ---------- Nền sáng / tối (mặc định sáng) ---------- */
+document.addEventListener('click', e => {
+  const b = e.target.closest('[data-act="theme"]'); if (!b) return;
+  const dark = document.documentElement.dataset.theme !== 'dark';
+  if (dark) document.documentElement.dataset.theme = 'dark'; else delete document.documentElement.dataset.theme;
+  try { localStorage.setItem('inhaus-theme', dark ? 'dark' : 'light'); } catch { /* trình duyệt chặn lưu */ }
+  b.textContent = dark ? '☀ Chuyển nền sáng' : '☾ Chuyển nền tối';
+  const m = $('#menu'); if (m) m.hidden = true;
+});
+
+/* ---------- Ô ngày luôn hiện dd/mm/yyyy (trình duyệt tiếng Anh vẫn hiện đúng) ---------- */
+function dressDates(root) {
+  root.querySelectorAll('input[type="date"]:not([data-dd])').forEach(inp => {
+    inp.dataset.dd = '1';
+    const w = document.createElement('span'); w.className = 'dwrap';
+    inp.parentNode.insertBefore(w, inp); w.appendChild(inp);
+    const lab = document.createElement('span'); lab.className = 'dlab num'; lab.setAttribute('aria-hidden', 'true'); w.appendChild(lab);
+    const sync = () => { lab.textContent = inp.value ? fmt(inp.value) : 'dd/mm/yyyy'; lab.classList.toggle('ph', !inp.value); };
+    inp.addEventListener('input', sync); inp.addEventListener('change', sync); sync();
+    inp.addEventListener('click', () => { try { inp.showPicker(); } catch { /* trình duyệt cũ */ } });
+  });
+}
+new MutationObserver(() => dressDates(document.body)).observe(document.body, { childList: true, subtree: true });
+dressDates(document.body);
