@@ -33,6 +33,8 @@ function view(html) { $('#view').innerHTML = html; }
 function errMsg(e) {
   const m = (e && (e.message || e.error_description || e.msg)) || String(e || '');
   if (/bad_code/.test(m)) return 'Mã mời không đúng. Hỏi chị Hạnh mã mới nhất.';
+  if (/name_taken/.test(m)) return 'Đã có dự án khác trùng tên này (kể cả dự án đã ẩn).';
+  if (/name_required/.test(m)) return 'Tên dự án không được để trống.';
   if (/taken/.test(m)) return 'Tên này đã có người liên kết. Báo chị Hạnh nếu bị nhầm.';
   if (/already_linked/.test(m)) return 'Tài khoản này đã liên kết với một tên khác.';
   if (/only_status_progress/.test(m)) return 'Bạn chỉ đổi được trạng thái và tiến độ của việc.';
@@ -556,8 +558,8 @@ function viewSettings() {
     ${S.projects.map(p => `<div class="stack" style="gap:6px"><b>${esc(p.name)}</b><div class="ticks">${S.staff.filter(s => s.active && s.role === 'staff').map(s => { const on = S.members.some(m => m.project_id === p.id && m.staff_id === s.id); return `<button class="chipbtn" aria-pressed="${on}" data-assign="${p.id}:${s.id}">${on ? '✓ ' : ''}${esc(s.name)}</button>`; }).join('')}</div></div>`).join('') || '<p class="muted">Chưa có dự án nào.</p>'}
   </section>
   <section class="panel stack"><h2>Dự án đang chạy và deadline</h2>
-    <div class="scroll"><table class="tbl"><thead><tr><th>Dự án</th><th>Ngày bắt đầu</th><th>Deadline</th><th></th></tr></thead><tbody>
-    ${S.projects.map(p => `<tr><td style="min-width:180px">${esc(p.name)}</td>
+    <div class="scroll"><table class="tbl"><thead><tr><th>Tên dự án (sửa được)</th><th>Ngày bắt đầu</th><th>Deadline</th><th></th></tr></thead><tbody>
+    ${S.projects.map(p => `<tr><td style="min-width:200px"><input id="pn-${p.id}" value="${esc(p.name)}" aria-label="Tên dự án"></td>
       <td><input type="date" id="ps-${p.id}" value="${p.start_date || ''}" aria-label="Ngày bắt đầu"></td>
       <td><input type="date" id="pd-${p.id}" value="${p.deadline || ''}" aria-label="Deadline"></td>
       <td class="row" style="flex-wrap:nowrap"><button class="btn small" data-saveproj="${p.id}">Lưu</button><button class="btn small danger ${S.armed === 'p' + p.id ? 'armed' : ''}" data-hideproj="${p.id}">${S.armed === 'p' + p.id ? 'Xác nhận ẩn' : 'Ẩn'}</button></td></tr>`).join('')}
@@ -738,9 +740,24 @@ document.addEventListener('click', async e => {
   }
   if (b.dataset.saveproj) {
     const id = Number(b.dataset.saveproj), start = $('#ps-' + id).value || null, deadline = $('#pd-' + id).value || null;
+    const name = ($('#pn-' + id).value || '').trim(), cur = S.projects.find(p => p.id === id);
+    if (!name) { toast('Tên dự án không được để trống'); return; }
     if (start && deadline && start > deadline) { toast('Ngày bắt đầu đang sau deadline. Kiểm tra lại.'); return; }
     b.disabled = true;
-    try { const res = await q(db.from('projects').update({ start_date: start, deadline }).eq('id', id).select()); const i = S.projects.findIndex(p => p.id === id); S.projects[i] = res[0]; toast('Đã lưu deadline ' + res[0].name); }
+    try {
+      const oldName = cur.name, renamed = name !== oldName;
+      if (renamed) {
+        await q(db.rpc('rename_project', { p_id: id, p_name: name }));
+        S.tasks.forEach(t => { if (t.project === oldName) t.project = name; });
+        (S.reports || []).forEach(r => (r.items || []).forEach(i => { if (i.project === oldName) i.project = name; }));
+        S.hours.forEach(h => { if (h.project === oldName) h.project = name; });
+        S.weekReports = null;
+      }
+      const res = await q(db.from('projects').update({ start_date: start, deadline }).eq('id', id).select());
+      const i = S.projects.findIndex(p => p.id === id); S.projects[i] = res[0];
+      toast(renamed ? `Đã đổi tên thành "${name}" (việc và báo cáo cũ cũng đổi theo)` : 'Đã lưu deadline ' + res[0].name);
+      if (renamed) viewSettings();
+    }
     catch (err) { toast(errMsg(err)); }
     b.disabled = false; return;
   }

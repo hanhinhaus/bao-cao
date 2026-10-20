@@ -1,5 +1,5 @@
 /* Service worker: chạy offline phần khung app + nhận thông báo đẩy */
-const CACHE = 'inhaus-bc-v6';
+const CACHE = 'inhaus-bc-v7';
 const SHELL = ['./', './index.html', './app.js', './features.js', './v2.css', './config.js', './manifest.webmanifest', './icon-192.png', './icon-512.png',
   'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js'];
 
